@@ -128,15 +128,15 @@ pub fn run_bench(
                 let mut con = client.get_connection()?;
 
                 // iterate through all of the requests, and make a request to the server
-                for (id, lat, long) in trace.iter() {
-                    if *id != idx {
+                for (req_id, (cl_id, lat, long)) in trace.iter().enumerate() {
+                    if *cl_id != idx {
                         continue;
                     }
                     let restaurants = radius(&mut con, *lat, *long)?;
                     tracing::debug!(
                         "Returned restaurant list of length: {:?} for query # {:?}",
                         restaurants.len(),
-                        id
+                        req_id,
                     );
                 }
                 Ok(())
@@ -212,7 +212,15 @@ where
             .wrap_err(format!("Failed to parse into f64: {}", split[1]))?;
         ret.push((a, b));
     }
-    Ok(ret)
+    let final_array: Vec<(f64, f64)> = ret
+        .into_iter()
+        .filter(|(lat, long)| {
+            (-1.0 * MAX_LATITUDE < *lat && *lat < MAX_LATITUDE)
+                && (-1.0 * MAX_LONGITUDE < *long && *long < MAX_LONGITUDE)
+        })
+        .collect();
+
+    Ok(final_array)
 }
 
 /// Loads the points in input_file into the redis store
@@ -230,10 +238,6 @@ fn load_data(input_file: &str) -> Result<Vec<(f64, f64, String)>> {
                 .map(char::from)
                 .collect();
             (*a, *b, rand_string)
-        })
-        .filter(|(lat, long, _val)| {
-            (-1.0 * MAX_LATITUDE < *lat && *lat < MAX_LATITUDE)
-                && (-1.0 * MAX_LONGITUDE < *long && *long < MAX_LONGITUDE)
         })
         .collect();
 
