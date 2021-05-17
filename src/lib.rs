@@ -17,12 +17,12 @@ use tracing::Level;
 use tracing_subscriber;
 use tracing_subscriber::{filter::LevelFilter, FmtSubscriber};
 
-const VALUE_SIZE: usize = 10;
+const VALUE_SIZE: usize = 2048;
 const KEY_NAME: &str = "RESTAURANT";
 const MAX_LATITUDE: f64 = 85.05112878;
 const MAX_LONGITUDE: f64 = 180.0;
 const SEARCH_RADIUS: f64 = 100.0;
-const TOP_K_VALUE: usize = 10;
+const TOP_K_VALUE: usize = 1;
 
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub enum TraceLevel {
@@ -201,9 +201,6 @@ where
     for line_res in lines {
         let line = line_res?;
         let split = line.split(",").collect::<Vec<&str>>();
-        if split.len() != 2 {
-            bail!("Trace file line does not have two items: {:?}", split);
-        }
         let a = split[0]
             .parse::<f64>()
             .wrap_err(format!("Failed to parse into f64: {}", split[0]))?;
