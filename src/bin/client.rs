@@ -58,24 +58,39 @@ struct Opt {
     redis_port: u16,
     #[structopt(short = "l", long = "load", help = "Just load keys")]
     load: bool,
-    #[structopt(short = "r", long = "run", help = "Just load keys")]
+    #[structopt(long = "run", help = "Just load keys")]
     run: bool,
+    #[structopt(
+        short = "c",
+        long = "cap",
+        help = "Cap the number of queries",
+        default_value = "100"
+    )]
+    cap: usize,
+    #[structopt(long = "radius", help = "Radius for search")]
+    radius: usize,
 }
 
 fn main() -> Result<()> {
     let opt = Opt::from_args();
     global_debug_init(opt.trace_level)?;
-    load_redis_store(&opt.server_ip, opt.redis_port, &opt.input_file)
-        .wrap_err("Failed to load store.")?;
+    if opt.load {
+        load_redis_store(&opt.server_ip, opt.redis_port, &opt.input_file)
+            .wrap_err("Failed to load store.")?;
+    }
 
-    run_bench(
-        &opt.server_ip,
-        opt.redis_port,
-        &opt.trace_file,
-        opt.machine_id,
-        opt.num_machines,
-        opt.num_processes,
-    )
-    .wrap_err("Failed to run bench.")?;
+    if opt.run {
+        run_bench(
+            &opt.server_ip,
+            opt.redis_port,
+            &opt.trace_file,
+            opt.machine_id,
+            opt.num_machines,
+            opt.num_processes,
+            opt.cap,
+            opt.radius,
+        )
+        .wrap_err("Failed to run bench.")?;
+    }
     Ok(())
 }
