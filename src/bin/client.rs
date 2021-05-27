@@ -69,6 +69,8 @@ struct Opt {
     cap: usize,
     #[structopt(long = "radius", help = "Radius for search")]
     radius: usize,
+    #[structopt(long = "search", help = "Search for radius")]
+    search: bool,
 }
 
 fn main() -> Result<()> {
@@ -89,6 +91,7 @@ fn main() -> Result<()> {
             opt.num_processes,
             opt.cap,
             opt.radius,
+            opt.search,
         )
         .wrap_err("Failed to run bench.")?;
     }

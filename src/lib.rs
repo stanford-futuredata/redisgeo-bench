@@ -1,3 +1,4 @@
+use base64;
 use byteorder::{ByteOrder, LittleEndian};
 use color_eyre::eyre::{bail, Result, WrapErr};
 use rand::{distributions::Alphanumeric, Rng};
@@ -5,12 +6,12 @@ use redis::{
     geo::{Coord, RadiusOptions, RadiusOrder, RadiusSearchResult, Unit},
     Commands, RedisResult,
 };
+use serde::Deserialize;
 use std::{
     fs::File,
     io::{self, BufRead},
     net::Ipv4Addr,
     path::Path,
-    str::from_utf8,
     thread,
     time::Instant,
 };
@@ -32,15 +33,15 @@ pub struct ReceivedPayload {
 
 impl ReceivedPayload {
     fn from_string(payload: &str) -> Result<Self> {
-        if payload.len() != (VALUE_SIZE + 8) {
-            bail!(
-                "Payload wrong length: expected {}, is {}.",
-                VALUE_SIZE + 8,
-                payload.len()
-            );
-        }
+        let encoding_length = payload.len() - VALUE_SIZE;
+        let decoded =
+            base64::decode(&payload.as_bytes()[VALUE_SIZE..(VALUE_SIZE + encoding_length)])
+                .wrap_err(format!(
+                    "Not able to decode: {:?}",
+                    &payload.as_bytes()[VALUE_SIZE..(VALUE_SIZE + encoding_length)]
+                ))?;
         Ok(ReceivedPayload {
-            rating: LittleEndian::read_i64(&payload.as_bytes()[VALUE_SIZE..(VALUE_SIZE + 8)]),
+            rating: LittleEndian::read_i64(decoded.as_slice()),
         })
     }
 
@@ -69,11 +70,26 @@ impl Payload {
         }
     }
 
+    fn get_rating(&self) -> i64 {
+        self.rating
+    }
+
     fn to_string(&self) -> Result<String> {
         let mut owned_string = self.arr.clone();
         let mut int_arr = vec![0u8; 8];
         LittleEndian::write_i64(int_arr.as_mut_slice(), self.rating);
-        owned_string.push_str(from_utf8(&int_arr)?);
+        let encoded = base64::encode(int_arr.clone());
+        tracing::debug!(
+            "int arr len: {}, encoded len: {}",
+            int_arr.len(),
+            encoded.len()
+        );
+        owned_string.push_str(&encoded);
+
+        // test decoding
+        let test_received = ReceivedPayload::from_string(owned_string.as_str())
+            .wrap_err("Not able to decode received payload")?;
+        assert!(test_received.get_rating() == self.rating);
         Ok(owned_string)
     }
 }
@@ -133,6 +149,7 @@ pub fn run_bench(
     num_processes: usize,
     cap: usize,
     radius: usize,
+    search_for_radius: bool,
 ) -> Result<()> {
     let input_data_points =
         read_points(trace_file).wrap_err("Failed to read in input query data.")?;
@@ -187,51 +204,67 @@ pub fn run_bench(
                 // make a redis connection and run the thread
                 let client = redis::Client::open((server_addr, redis_port))?;
                 let mut con = client.get_connection()?;
-
-                // iterate through all of the requests, and make a request to the server
-                for (req_id, (cl_id, lat, long)) in trace.iter().enumerate() {
-                    if *cl_id != idx {
-                        continue;
+                if search_for_radius {
+                    let mut min_radius = 1;
+                    // iterate through all of the requests, and make a request to the server
+                    for (req_id, (cl_id, lat, long)) in trace.iter().enumerate() {
+                        if *cl_id != idx {
+                            continue;
+                        }
+                        //tracing::debug!(id=req_id, cl_id = cl_id, lat=?lat, long=?long, "Request");
+                        let mut restaurants = radius_func(&mut con, *lat, *long, min_radius)?;
+                        while restaurants.len() < TOP_K_VALUE {
+                            tracing::debug!("Increasing radius to {}; req_id: {}, cl_id: {}", min_radius + 1, req_id, cl_id);
+                            min_radius += 1;
+                            restaurants = radius_func(&mut con, *lat, *long, min_radius)?;
+                        }
                     }
-                    tracing::debug!(id=req_id, cl_id = cl_id, lat=?lat, long=?long, "Request");
-                    let restaurants = radius_func(&mut con, *lat, *long, radius)?;
-                    // now sort the restaurants by rating, also hope there are all k
-                    if restaurants.len() < TOP_K_VALUE {
-                        tracing::debug!(
-                            "Returned restaurant list of length: {:?} for query # {:?}",
-                            restaurants.len(),
-                            req_id,
-                        );
-                        bail!("Restaurant length too short: {}", restaurants.len());
+                    Ok(min_radius)
+                } else {
+                    // iterate through all of the requests, and make a request to the server
+                    for (req_id, (cl_id, lat, long)) in trace.iter().enumerate() {
+                        if *cl_id != idx {
+                            continue;
+                        }
+                        tracing::debug!(id=req_id, cl_id = cl_id, lat=?lat, long=?long, "Request");
+                        let restaurants = radius_func(&mut con, *lat, *long, radius)?;
+                        if  restaurants.len() < TOP_K_VALUE {
+                            bail!("Did not get enough restaurants for query # {}, cl # {}, lat # {:?}, long # {:?}", req_id, cl_id, lat, long);
+                        }
+                        let payloads_result: Result<Vec<(usize, ReceivedPayload)>> = restaurants
+                            .iter()
+                            .enumerate()
+                            .map(|(idx, resp)| Ok((idx, ReceivedPayload::from_string(&resp.name)?)))
+                            .collect();
+                        let mut payloads = payloads_result
+                            .wrap_err("Unable to get vector of received payloads.")?;
+                        payloads.sort_by(|a, b| {
+                            a.1.get_rating().partial_cmp(&b.1.get_rating()).unwrap()
+                        });
                     }
-
-                    let payloads_result: Result<Vec<(usize, ReceivedPayload)>> = restaurants
-                        .iter()
-                        .enumerate()
-                        .map(|(idx, resp)| Ok((idx, ReceivedPayload::from_string(&resp.name)?)))
-                        .collect();
-                    let mut payloads =
-                        payloads_result.wrap_err("Unable to get vector of received payloads.")?;
-                    payloads
-                        .sort_by(|a, b| a.1.get_rating().partial_cmp(&b.1.get_rating()).unwrap());
+                    Ok(radius)
                 }
-                Ok(())
             })
         })
-        .collect::<Vec<JoinHandle<Result<()>>>>();
+        .collect::<Vec<JoinHandle<Result<usize>>>>();
 
+    let mut overall_min_radius = 1;
     for handle in handles.into_iter() {
-        handle
+        let min_rad = handle
             .join()
             .unwrap()
             .wrap_err("Failed to join redis client thread.")?;
+        if min_rad > overall_min_radius {
+            overall_min_radius = min_rad
+        }
     }
     let total_time = start.elapsed().as_millis();
 
     tracing::info!(
+        min_radius = overall_min_radius,
         "Executed {} queries in {:?} milliseconds.",
         total_num_queries,
-        total_time
+        total_time,
     );
 
     Ok(())
@@ -257,37 +290,36 @@ pub fn load_redis_store(redis_server: &Ipv4Addr, redis_port: u16, input_file: &s
     Ok(())
 }
 
+#[derive(Debug, Deserialize)]
+struct Point {
+    pub lat: f64,
+    pub long: f64,
+}
+
 /// Reads a query or input data file
 fn read_points<P>(filename: P) -> Result<Vec<(f64, f64)>>
 where
     P: AsRef<Path>,
 {
-    let file = File::open(filename)?;
-    let lines = io::BufReader::new(file).lines();
-    let mut ret: Vec<(f64, f64)> = Vec::default();
-    let mut cnt = 0;
-    for line_res in lines {
-        cnt += 1;
-        if cnt == 1 {
+    let mut rdr = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .from_path(filename)?;
+    let mut final_array: Vec<(f64, f64)> = Vec::default();
+    let mut i = 0;
+    for record in rdr.deserialize() {
+        if i % 100000 == 0 {
+            tracing::debug!("On {}th record", i);
+        }
+        let point: Point = record?;
+        if !(-1.0 * MAX_LATITUDE < point.lat && point.lat < MAX_LATITUDE)
+            || !(-1.0 * MAX_LONGITUDE < point.long && point.long < MAX_LONGITUDE)
+        {
             continue;
         }
-        let line = line_res?;
-        let split = line.split(",").collect::<Vec<&str>>();
-        let a = split[0]
-            .parse::<f64>()
-            .wrap_err(format!("Failed to parse into f64: {}", split[0]))?;
-        let b = split[1]
-            .parse::<f64>()
-            .wrap_err(format!("Failed to parse into f64: {}", split[1]))?;
-        ret.push((a, b));
+        final_array.push((point.lat, point.long));
+        i += 1;
     }
-    let final_array: Vec<(f64, f64)> = ret
-        .into_iter()
-        .filter(|(lat, long)| {
-            (-1.0 * MAX_LATITUDE < *lat && *lat < MAX_LATITUDE)
-                && (-1.0 * MAX_LONGITUDE < *long && *long < MAX_LONGITUDE)
-        })
-        .collect();
+    tracing::debug!("Parsed points: {}", final_array.len());
 
     Ok(final_array)
 }
@@ -346,6 +378,12 @@ fn load_data(input_file: &str, redis_server: &Ipv4Addr, redis_port: u16) -> Resu
                         "Failed to add input data point: {:?}",
                         (cl_id, lat, long)
                     ))?;
+                    tracing::debug!(
+                        "Added {},{} with payload rating of {:?}",
+                        lat,
+                        long,
+                        payload.get_rating(),
+                    );
                 }
                 Ok(())
             })
