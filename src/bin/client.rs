@@ -26,6 +26,7 @@ struct Opt {
         short = "if",
         long = "input_file",
         help = "Input file of input points."
+        default_value = "",
     )]
     input_file: String,
     #[structopt(
@@ -60,25 +61,25 @@ struct Opt {
     load: bool,
     #[structopt(long = "run", help = "Just load keys")]
     run: bool,
-    #[structopt(
-        short = "c",
-        long = "cap",
-        help = "Cap the number of queries",
-        default_value = "100"
-    )]
-    cap: usize,
     #[structopt(long = "radius", help = "Radius for search")]
     radius: usize,
     #[structopt(long = "search", help = "Search for radius")]
     search: bool,
+    #[structopt(long = "cap", help = "Maximum number of queries to run.")]
+    cap: usize,
 }
 
 fn main() -> Result<()> {
     let opt = Opt::from_args();
     global_debug_init(opt.trace_level)?;
     if opt.load {
-        load_redis_store(&opt.server_ip, opt.redis_port, &opt.input_file)
-            .wrap_err("Failed to load store.")?;
+        load_redis_store(
+            &opt.server_ip,
+            opt.redis_port,
+            &opt.input_file,
+            opt.num_processes,
+        )
+        .wrap_err("Failed to load store.")?;
     }
 
     if opt.run {
@@ -89,9 +90,9 @@ fn main() -> Result<()> {
             opt.machine_id,
             opt.num_machines,
             opt.num_processes,
-            opt.cap,
             opt.radius,
             opt.search,
+            opt.cap,
         )
         .wrap_err("Failed to run bench.")?;
     }
