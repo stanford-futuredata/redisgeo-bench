@@ -311,6 +311,7 @@ pub fn run_bench(
     }
     let total_time = start.elapsed().as_millis();
     tracing::info!(
+        machine_id = machine_id,
         min_radius = total_result.get_min_radius(),
         "Executed {} queries in {:?} milliseconds; {} invalid",
         total_result.get_total_executed(),
