@@ -142,7 +142,11 @@ struct QueriesResult {
 }
 
 impl QueriesResult {
-    pub fn new(min_radius: usize, total_executed: usize, total_assigned_invalid: usize) -> QueriesResult {
+    pub fn new(
+        min_radius: usize,
+        total_executed: usize,
+        total_assigned_invalid: usize,
+    ) -> QueriesResult {
         QueriesResult {
             min_radius: min_radius,
             total_executed: total_executed,
@@ -161,7 +165,6 @@ impl QueriesResult {
     pub fn get_assigned_invalid(&self) -> usize {
         self.total_assigned_invalid
     }
-
 
     pub fn combine(&mut self, other: QueriesResult) {
         self.min_radius = std::cmp::max(self.min_radius, other.get_min_radius());
@@ -208,10 +211,12 @@ pub fn run_bench(
             thread::spawn(move || {
                 // Pin this thread to a single CPU core.
                 core_affinity::set_for_current(core_id);
-                
+                tracing::debug!("Spawn thread {}", idx);
                 // make a redis connection and run the thread
                 let client = redis::Client::open((server_addr, redis_port))?;
+                tracing:debug!("made client");
                 let mut con = client.get_connection()?;
+                tracing::debug!("Got con");
 
                 // open the file
                 let mut rdr = csv::ReaderBuilder::new()
@@ -329,8 +334,14 @@ fn radius_func(
     con.geo_radius(KEY_NAME, long, lat, radius as _, Unit::Kilometers, opts)
 }
 
-pub fn load_redis_store(redis_server: &Ipv4Addr, redis_port: u16, input_file: &str, num_processes: usize) -> Result<()> {
-    load_data(input_file, redis_server, redis_port, num_processes).wrap_err("Failed to load in input data")?;
+pub fn load_redis_store(
+    redis_server: &Ipv4Addr,
+    redis_port: u16,
+    input_file: &str,
+    num_processes: usize,
+) -> Result<()> {
+    load_data(input_file, redis_server, redis_port, num_processes)
+        .wrap_err("Failed to load in input data")?;
     tracing::debug!("Loaded input data");
 
     Ok(())
@@ -343,7 +354,12 @@ struct Point {
 }
 
 /// Loads the points in input_file into the redis store
-fn load_data(input_file: &str, redis_server: &Ipv4Addr, redis_port: u16, num_processes: usize) -> Result<()> {
+fn load_data(
+    input_file: &str,
+    redis_server: &Ipv4Addr,
+    redis_port: u16,
+    num_processes: usize,
+) -> Result<()> {
     // Retrieve the IDs of all active CPU cores.
     let core_ids = match core_affinity::get_core_ids() {
         Some(mut v) => {
@@ -373,13 +389,12 @@ fn load_data(input_file: &str, redis_server: &Ipv4Addr, redis_port: u16, num_pro
                 // make a redis connection and run the thread
                 let client = redis::Client::open((server_addr, redis_port))?;
                 let mut con = client.get_connection()?;
-                
+
                 let file = File::open(&filename)?;
                 let lines = BufReader::new(file).lines();
                 let mut cur_core = 0;
                 let mut ct = 0;
                 for line_res in lines {
-
                     if cur_core != core_idx {
                         ct += 1;
                         cur_core += 1;
@@ -388,7 +403,7 @@ fn load_data(input_file: &str, redis_server: &Ipv4Addr, redis_port: u16, num_pro
                     }
                     if ct % 100000 == 0 {
                         tracing::debug!("On {}th record", ct);
-                    }           
+                    }
                     let line = line_res?;
                     let split = line.split(",").collect::<Vec<&str>>();
                     let a = split[0]
@@ -397,7 +412,7 @@ fn load_data(input_file: &str, redis_server: &Ipv4Addr, redis_port: u16, num_pro
                     let b = split[1]
                         .parse::<f64>()
                         .wrap_err(format!("Failed to parse into f64: {}", split[1]))?;
-                    let point = Point { lat: a, long: b} ;
+                    let point = Point { lat: a, long: b };
                     if !(-1.0 * MAX_LATITUDE < point.lat && point.lat < MAX_LATITUDE)
                         || !(-1.0 * MAX_LONGITUDE < point.long && point.long < MAX_LONGITUDE)
                     {
