@@ -25,8 +25,8 @@ struct Opt {
     #[structopt(
         short = "if",
         long = "input_file",
-        help = "Input file of input points."
-        default_value = "",
+        help = "Input file of input points.",
+        default_value = ""
     )]
     input_file: String,
     #[structopt(
