@@ -72,7 +72,9 @@ struct Opt {
 fn main() -> Result<()> {
     let opt = Opt::from_args();
     global_debug_init(opt.trace_level)?;
+    tracing::info!("About to run benchmark");
     if opt.load {
+        tracing::debug!("Trying to load");
         load_redis_store(
             &opt.server_ip,
             opt.redis_port,
@@ -83,6 +85,7 @@ fn main() -> Result<()> {
     }
 
     if opt.run {
+        tracing::debug!("Trying to run");
         run_bench(
             &opt.server_ip,
             opt.redis_port,
