@@ -269,7 +269,7 @@ pub fn run_bench(
                             restaurants = radius_func(&mut con, point.lat, point.long, min_radius)?;
                         }
                     } else {
-                        tracing::debug!(id=cur_count, process = idx, lat=?point.lat, long=?point.long, "Request");
+                        tracing::debug!(id=cur_count, process = idx, machine=machine_id, lat=?point.lat, long=?point.long, "Request");
                         let restaurants = radius_func(&mut con, point.lat, point.long, radius)?;
                         if  restaurants.len() < TOP_K_VALUE {
                             bail!("Did not get enough restaurants for query # {}, cl # {}, mach # {}, lat # {:?}, long # {:?}", cur_count, idx, machine_id, point.lat, point.long);
