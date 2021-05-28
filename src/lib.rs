@@ -211,12 +211,10 @@ pub fn run_bench(
             thread::spawn(move || {
                 // Pin this thread to a single CPU core.
                 core_affinity::set_for_current(core_id);
-                tracing::debug!("Spawn thread {}", idx);
                 // make a redis connection and run the thread
                 let client = redis::Client::open((server_addr, redis_port))?;
-                tracing::debug!("made client");
+                tracing::debug!(core=idx,machine=machine_id,"made client");
                 let mut con = client.get_connection()?;
-                tracing::debug!("Got con");
 
                 // open the file
                 let mut rdr = csv::ReaderBuilder::new()
@@ -260,7 +258,7 @@ pub fn run_bench(
                     total_evaluated += 1;
 
                     if total_evaluated % 1000 == 0 {
-                        tracing::debug!(count = total_evaluated, core = idx, "Total evaluated so far");
+                        tracing::debug!(count = total_evaluated, core = idx, machine=machine_id, "Total evaluated so far");
                     }
 
                     if search_for_radius {
@@ -274,7 +272,7 @@ pub fn run_bench(
                         tracing::debug!(id=cur_count, process = idx, lat=?point.lat, long=?point.long, "Request");
                         let restaurants = radius_func(&mut con, point.lat, point.long, radius)?;
                         if  restaurants.len() < TOP_K_VALUE {
-                            bail!("Did not get enough restaurants for query # {}, cl # {}, lat # {:?}, long # {:?}", cur_count, idx, point.lat, point.long);
+                            bail!("Did not get enough restaurants for query # {}, cl # {}, mach # {}, lat # {:?}, long # {:?}", cur_count, idx, machine_id, point.lat, point.long);
                         }
                         let payloads_result: Result<Vec<(usize, ReceivedPayload)>> = restaurants
                             .iter()
