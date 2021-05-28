@@ -214,7 +214,7 @@ pub fn run_bench(
                 tracing::debug!("Spawn thread {}", idx);
                 // make a redis connection and run the thread
                 let client = redis::Client::open((server_addr, redis_port))?;
-                tracing:debug!("made client");
+                tracing::debug!("made client");
                 let mut con = client.get_connection()?;
                 tracing::debug!("Got con");
 
